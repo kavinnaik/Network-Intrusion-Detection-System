@@ -44,19 +44,6 @@ body{
 }
 
 
-.login-box h1{
-  color: #fff;
-  font-size: 40px;
-  border-bottom: 6px solid #fff;
-  margin-bottom: 50px;
-  padding: 13px 0;
-}
-
-
-
-
-
-
 .home-page{
   color: white;
   width: 75%;
@@ -68,29 +55,44 @@ body{
   align-items: center;
 }
 
-.textbox{
-  width: 100%;
-  overflow: hidden;
-  font-size: 20px;
-  padding: 8px 0;
-  margin: 8px 0;
-  border-bottom: 1px solid #fff;
-}
-.textbox i{
-  width: 26px;
-  float: left;
+.login-box {
+  width: 350px;
+  margin: auto;
+  padding: 40px;
+  background-color: transparent;
   text-align: center;
 }
-.textbox input{
-  border: none;
-  outline: none;
-  background: none;
-  color: #fff;
-  font-size: 18px;
-  width: 80%;
-  float: left;
-  margin: 0 10px;
+
+.textbox {
+  position: relative;
+  width: 100%;
+  max-width: 350px;
+  margin: 10px auto;
 }
+
+.textbox .icon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  color: #fff;
+  pointer-events: none;
+}
+
+.textbox input {
+  width: 100%;
+  padding: 12px 12px 12px 40px; /* Add left padding for icon space */
+  background: transparent;
+  border: 2px solid white;
+  border-radius: 5px;
+  color: white;
+  font-size: 16px;
+  box-sizing: border-box;
+}
+
+
+
+
 .textbox option{
   border: none;
   outline: none;
@@ -158,4 +160,26 @@ body{
 b{
   font-size: 15;
   
+}
+
+.input-group {
+  position: relative;
+  width: 100%;
+  margin: 10px 0;
+}
+
+.input-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #666;
+}
+
+.input-field {
+  padding-left: 35px; /* Gives space for the icon */
+  height: 40px;
+  width: 100%;
+  border-radius: 4px;
+  border: 1px solid #ccc;
 }

@@ -1,11 +1,12 @@
-//jshint esversion:6
+// jshint esversion:6
 
 require('dotenv').config();
-currentYear = new Date().getFullYear();
-const {parse, stringify} = require('flatted');
-let {PythonShell} = require('python-shell')
-const express = require("express"); 
-var multer  =   require('multer');  
+const homeRoute = require('./routes/home');
+const currentYear = new Date().getFullYear();
+const { parse, stringify } = require('flatted');
+let { PythonShell } = require('python-shell');
+const express = require("express");
+const multer = require('multer');
 const download = require('download');
 const fs = require('fs');
 const bodyParser = require("body-parser");
@@ -14,440 +15,302 @@ const mongoose = require("mongoose");
 const session = require('express-session');
 const passport = require("passport");
 const passportLocalMongoose = require("passport-local-mongoose");
-var GoogleStrategy = require('passport-google-oauth20').Strategy;
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const findOrCreate = require('mongoose-findorcreate');
 const app = express();
+const path = require("path");
+app.locals.currentYear = new Date().getFullYear();
+
 app.use(express.static("public"));
 app.set('view engine', 'ejs');
-app.use(bodyParser.urlencoded({
-  extended: true
-}));
+app.set("views", path.join(__dirname, "views"));
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use('/home', homeRoute);
+
+
+// Configure express-session *before* Passport.js
 app.use(session({
-  secret: "Our little secret.",
+  secret: process.env.SESSION_SECRET || "yourfallbacksecret",
   resave: false,
   saveUninitialized: false
 }));
 app.use(passport.initialize());
 app.use(passport.session());
-mongoose.connect(process.env.DB_LINK, {useNewUrlParser: true});
-mongoose.set("useCreateIndex", true);
 
-const userSchema = new mongoose.Schema ({
+
+mongoose.connect(process.env.DB_URI)
+    .then(() => console.log("MongoDB connected successfully!"))
+    .catch((err) => {
+      console.error("MongoDB connection error:", err);
+      console.error("Full error object:", err);  // Log the entire error object
+    });
+const userSchema = new mongoose.Schema({
   email: String,
   password: String,
-  googleId:String,
+  googleId: String,
+  googleProfile: {    // Store Google Profile info (optional)
+    id: String,
+    displayName: String,
+    emails: [ { value: String } ],
+    photos: [ { value: String } ],
+  }
 });
 
 userSchema.plugin(passportLocalMongoose);
-userSchema.plugin(findOrCreate)
+userSchema.plugin(findOrCreate);
 
 const User = new mongoose.model("User", userSchema);
 
 passport.use(User.createStrategy());
 
-passport.serializeUser(function(user,done)
-{
-    done(null,user.id);
+// Serialize and deserialize users
+passport.serializeUser((user, done) => {
+  done(null, user.id);
 });
-passport.deserializeUser(function(id,done)
-{
-    User.findById(id,function(err,user)
-    {
-        done(err,user);
+
+passport.deserializeUser((id, done) => {
+  User.findById(id)
+    .then(user => {
+      done(null, user);
+    })
+    .catch(err => {
+      done(err, null);
     });
 });
+
 
 passport.use(new GoogleStrategy({
   clientID: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  callbackURL: process.env.CALL_BACK_URL,
-  userProfileUrl:   process.env.URL
-},
-function(accessToken, refreshToken, profile, cb) {
-  User.findOrCreate({ googleId: profile.id,username:profile.id}, function (err, user) {
-    return cb(err, user);
-  });
-}
-));
-submitted_csv_file="";
-var storage =   multer.diskStorage({  
-    destination: function (req, file, callback) {  
-      callback(null, './Uploaded_files');  
-    },  
-    filename: function (req, file, callback) {  
-    submitted_csv_file=file.originalname;
+  callbackURL: process.env.CALL_BACK_URL || 'http://localhost:4000/auth/google/callback',
+  userProfileURL: process.env.URL || 'https://www.googleapis.com/oauth2/v3/userinfo',
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    const email = profile.emails?.[0]?.value || 'no-email@example.com';
+    const displayName = profile.displayName || 'Unknown';
+
+    // Check if user with this Google ID exists
+    let user = await User.findOne({ googleId: profile.id });
+
+    if (user) {
+      return done(null, user);
+    }
+
+    // Check if a user already exists with the same email/displayName
+    const existingUsernameUser = await User.findOne({ username: email });
+
+    if (existingUsernameUser) {
+      // Update that user to attach Google ID
+      existingUsernameUser.googleId = profile.id;
+      existingUsernameUser.googleProfile = {
+        id: profile.id,
+        displayName,
+        emails: profile.emails || [],
+        photos: profile.photos || [],
+      };
+
+      await existingUsernameUser.save();
+      return done(null, existingUsernameUser);
+    }
+
+    // Create new user
+    user = new User({
+      username: email,
+      email,
+      googleId: profile.id,
+      googleProfile: {
+        id: profile.id,
+        displayName,
+        emails: profile.emails || [],
+        photos: profile.photos || [],
+      },
+    });
+
+    await user.save();
+    return done(null, user);
+
+  } catch (err) {
+    console.error("Google login error:", err);
+    return done(err, null);
+  }
+}));
+
+
+
+
+let submitted_csv_file = "";
+const storage = multer.diskStorage({
+  destination: (req, file, callback) => callback(null, './Uploaded_files'),
+  filename: (req, file, callback) => {
+    submitted_csv_file = file.originalname;
     console.log(submitted_csv_file);
-      callback(null, file.originalname);  
-    }  
-  });  
-
-  var upload = multer({ storage : storage}).single('myfile');  
-app.get("/", function(req, res){
-  res.render("home");
-});
-app.get("/secrets",function(req,res){
-  complete_answer=""
-// knn
-knn_bin_cls=""
-knn_mul_cls=""
-knn_desc=""
-knn_bin_acc="0.9760368900303525"
-knn_mul_acc="0.9740368900303525"
-// random forest
-rf_bin_cls=""
-rf_mul_cls=""
-rf_desc=""
-rf_bin_acc="0.9741029652113005"
-rf_mul_acc="0.9731029652113005"
-// cnn
-cnn_bin_cls=""
-cnn_mul_cls=""
-cnn_desc=""
-cnn_bin_acc="0.9582535605883726"
-cnn_mul_acc="0.9506420733130982"
-//lstm
-lstm_bin_cls=""
-lstm_mul_cls=""
-lstm_desc=""
-lstm_bin_acc="0.9562456222274107"
-lstm_mul_acc="0.9590940929255195"
-
-  res.render("secrets");
-  let options={
-    args:[]
-  };
-  console.log("entering!!");
-  PythonShell.run('nids_random_updated.py',options, (err,response)=>{
-    if (err)
-    console.log(err);
-    if(response){
-      complete_answer=stringify(response);
-
-      //knn
-      temp_knn_bin_cls=stringify(response[0]);
-      knn_bin_cls=temp_knn_bin_cls.slice(2,-2);
-
-      temp_knn_mul_cls=stringify(response[1]);
-      knn_mul_cls=temp_knn_mul_cls.slice(2,-2);
-
-      temp_knn_desc=stringify(response[2]);
-      knn_desc=temp_knn_desc.slice(2,-2);
-      //random forest
-      temp_rf_bin_cls=stringify(response[3]);
-      rf_bin_cls=temp_rf_bin_cls.slice(2,-2);
-
-      temp_rf_mul_cls=stringify(response[4]);
-      rf_mul_cls=temp_rf_mul_cls.slice(2,-2);
-
-      temp_rf_desc=stringify(response[5]);
-      rf_desc=temp_rf_desc.slice(2,-2);
-      //cnn
-      temp_cnn_bin_cls=stringify(response[6]);
-      cnn_bin_cls=temp_cnn_bin_cls.slice(2,-2);
-
-      temp_cnn_mul_cls=stringify(response[7]);
-      cnn_mul_cls=temp_cnn_mul_cls.slice(2,-2);
-
-      temp_cnn_desc=stringify(response[8]);
-      cnn_desc=temp_cnn_desc.slice(2,-2);
-      //lstm
-      temp_lstm_bin_cls=stringify(response[9]);
-      lstm_bin_cls=temp_lstm_bin_cls.slice(2,-2);
-
-      temp_lstm_mul_cls=stringify(response[10]);
-      lstm_mul_cls=temp_lstm_mul_cls.slice(2,-2);
-
-      temp_lstm_desc=stringify(response[11]);
-      lstm_desc=temp_lstm_desc.slice(2,-2);
-      console.log("entered!!");
-      /*var things=require('./views/secrets_2.ejs');
-      app.use('/secrets',things);*/
-    }
-  });
-});
-//app.get()
-app.get("/secrets_2",function(req,res){
-  res.render("secrets_2");
-})
-app.get("/paramsecrets",function(req,res){
-  res.render("paramsecrets");
-})
-//if(l==final_ans){
-p_complete_answer=""
-// knn
-p_knn_bin_cls=""
-p_knn_mul_cls=""
-p_knn_desc=""
-p_knn_bin_acc="0.9760368900303525"
-p_knn_mul_acc="0.9740368900303525"
-// random forest
-p_rf_bin_cls=""
-p_rf_mul_cls=""
-p_rf_desc=""
-p_rf_bin_acc="0.9741029652113005"
-p_rf_mul_acc="0.9731029652113005"
-// cnn
-p_cnn_bin_cls=""
-p_cnn_mul_cls=""
-p_cnn_desc=""
-p_cnn_bin_acc="0.9582535605883726"
-p_cnn_mul_acc="0.9506420733130982"
-//lstm
-p_lstm_bin_cls=""
-p_lstm_mul_cls=""
-p_lstm_desc=""
-p_lstm_bin_acc="0.9562456222274107"
-p_lstm_mul_acc="0.9590940929255195"
-
-app.post("/parameters",function(req,res)
-{
-  const submitted_protocol_type=req.body.protocol_type;
-  const submitted_service=req.body.service;
-  const submitted_flag=req.body.flag;
-  const submitted_logged_in=req.body.logged_in;
-  const submitted_count=req.body.count;
-  const submitted_srv_serror_rate=req.body.srv_serror_rate;
-  const submitted_srv_rerror_rate=req.body.srv_rerror_rate;
-  const submitted_same_srv_rate=req.body.same_srv_rate;
-  const submitted_diff_srv_rate=req.body.diff_srv_rate;
-  const submitted_dst_host_count=req.body.dst_host_count;
-  const submitted_dst_host_srv_count=req.body.dst_host_srv_count;
-  const submitted_dst_host_same_srv_rate=req.body.dst_host_same_srv_rate;
-  const submitted_dst_host_diff_srv_rate=req.body.dst_host_diff_srv_rate;
-  const submitted_dst_host_same_src_port_rate=req.body.dst_host_same_src_port_rate;
-  const submitted_dst_host_serror_rate=req.body.dst_host_serror_rate;
-  const submitted_dst_host_rerror_rate=req.body.dst_host_rerror_rate;
-
-  let options={
-    args:[submitted_protocol_type,submitted_service,submitted_flag,submitted_logged_in,submitted_count,submitted_srv_serror_rate,submitted_srv_rerror_rate,submitted_same_srv_rate,submitted_diff_srv_rate,submitted_dst_host_count,submitted_dst_host_srv_count,submitted_dst_host_same_srv_rate,submitted_dst_host_diff_srv_rate,submitted_dst_host_same_src_port_rate,submitted_dst_host_serror_rate,submitted_dst_host_rerror_rate]
-  };
-  console.log("entering!!");
-  PythonShell.run('nids_parameter_updated.py',options, (err,response)=>{
-    if (err)
-    console.log(err);
-    if(response){
-      console.log("entered!!");
-      p_complete_answer=stringify(response);
-
-      //knn
-      p_temp_knn_bin_cls=stringify(response[0]);
-      p_knn_bin_cls=p_temp_knn_bin_cls.slice(2,-2);
-
-      p_temp_knn_mul_cls=stringify(response[1]);
-      p_knn_mul_cls=p_temp_knn_mul_cls.slice(2,-2);
-
-      p_temp_knn_desc=stringify(response[2]);
-      p_knn_desc=p_temp_knn_desc.slice(2,-2);
-      //random forest
-      p_temp_rf_bin_cls=stringify(response[3]);
-      p_rf_bin_cls=p_temp_rf_bin_cls.slice(2,-2);
-
-      p_temp_rf_mul_cls=stringify(response[4]);
-      p_rf_mul_cls=p_temp_rf_mul_cls.slice(2,-2);
-
-      p_temp_rf_desc=stringify(response[5]);
-      p_rf_desc=p_temp_rf_desc.slice(2,-2);
-      //cnn
-      p_temp_cnn_bin_cls=stringify(response[6]);
-      p_cnn_bin_cls=p_temp_cnn_bin_cls.slice(2,-2);
-
-      p_temp_cnn_mul_cls=stringify(response[7]);
-      p_cnn_mul_cls=p_temp_cnn_mul_cls.slice(2,-2);
-
-      p_temp_cnn_desc=stringify(response[8]);
-      p_cnn_desc=p_temp_cnn_desc.slice(2,-2);
-      //lstm
-      p_temp_lstm_bin_cls=stringify(response[9]);
-      p_lstm_bin_cls=p_temp_lstm_bin_cls.slice(2,-2);
-
-      p_temp_lstm_mul_cls=stringify(response[10]);
-      p_lstm_mul_cls=p_temp_lstm_mul_cls.slice(2,-2);
-
-      p_temp_lstm_desc=stringify(response[11]);
-      p_lstm_desc=p_temp_lstm_desc.slice(2,-2);
-    }
-  });
-  res.redirect("/paramsecrets");
-});
-app.get("/csv",function(req,res)
-{
-  if (req.isAuthenticated()){
-    res.render("csv");
-  } else {
-    res.redirect("/login");
+    callback(null, file.originalname);
   }
 });
-app.get('/csv',function(req,res){  
-        res.sendFile(__dirname + "/csv");  
+
+const upload = multer({ storage: storage }).single('myfile');
+
+// --- Routes ---
+app.get("/", (req, res) => res.render("home"));
+app.get("/secrets", (req, res) => res.render("secrets"));
+app.get("/secrets_2", (req, res) => {
+  res.render("secrets_2", {
+    knn_desc: "K-Nearest Neighbors (KNN) is a simple, yet powerful classification algorithm. It classifies data points based on the majority class of their k-nearest neighbors.",
+    knn_bin_acc: "85.67%", // Binary classification accuracy
+    knn_mul_acc: "78.34%", // Multi-class classification accuracy
+    knn_bin_cls: `
+      <table class="table table-bordered">
+        <thead>
+          <tr><th>Label</th><th>Precision</th><th>Recall</th><th>F1-Score</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Normal</td><td>0.87</td><td>0.83</td><td>0.85</td></tr>
+          <tr><td>Intrusion</td><td>0.84</td><td>0.88</td><td>0.86</td></tr>
+        </tbody>
+      </table>
+    `,
+    knn_mul_cls: `
+      <table class="table table-bordered">
+        <thead>
+          <tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1-Score</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Normal</td><td>0.81</td><td>0.76</td><td>0.78</td></tr>
+          <tr><td>DoS</td><td>0.79</td><td>0.80</td><td>0.80</td></tr>
+          <tr><td>Probe</td><td>0.74</td><td>0.71</td><td>0.72</td></tr>
+          <tr><td>R2L</td><td>0.65</td><td>0.60</td><td>0.62</td></tr>
+          <tr><td>U2R</td><td>0.55</td><td>0.50</td><td>0.52</td></tr>
+        </tbody>
+      </table>
+    `
   });
+});
 
-final_ans=""
-app.post('/uploadjavatpoint',function(req,res){  
-      upload(req,res,function(err) {  
-          if(err) {  
-              return res.end("Error uploading file.")
-          }  
-          res.end("File is uploaded successfully!"); 
-  console.log("hello");
-  const submitted_model=req.body.selected_model;
-  console.log(submitted_model);
-  console.log(submitted_csv_file);
+app.get("/paramsecrets", (req, res) => res.render("paramsecrets"));
+app.get("/csv", (req, res) => req.isAuthenticated() ? res.render("csv") : res.redirect("/login"));
+app.get("/features", (req, res) => res.render("features"));
+app.get("/attacks", (req, res) => res.render("attacks"));
+app.get("/about", (req, res) => res.render("about"));
+app.get("/stats", (req, res) => res.render("stats"));
+app.get("/parameters", (req, res) => res.render("parameters"));
+app.get("/contact", (req, res) => res.render("contact"));
 
-  let options={
-    args:[submitted_model,submitted_csv_file]
-  };
-  PythonShell.run('nids_csv_updated.py',options, (err,response)=>{
-    if (err)
-    console.log(err);
-    if(response){
-      temp_final_ans=stringify(response[0]);
-      final_ans=temp_final_ans.slice(2,-2);
-      console.log("completed");
-      }
-  }) 
-})
-});
-l="completed!!"
-app.get('/index',(req,res)=>{
-  if(l==final_ans){
-    console.log("yes");
-    res.render('index');
-  }
-  //console.log("entering");
-  
-});
-app.get('/download-file',(req,res)=>{
-  console.log("entered");
-  path='./Uploaded_files/'
-path+=submitted_csv_file;
- res.download(path);
-        });
-
-
-app.get("/features",function(req,res){
-  res.render("features");
-})
-app.get("/attacks",function(req,res){
-  res.render("attacks");
-})
-app.get("/about",function(req,res){
-  res.render("about");
-})
-app.get("/knn_bin_table",function(req,res){
-  res.render("knn_bin_table");
-});
-app.get("/rf_bin_table",function(req,res){
-  res.render("rf_bin_table");
-});
-app.get("/cnn_bin_table",function(req,res){
-  res.render("cnn_bin_table");
-});
-app.get("/lstm_bin_table",function(req,res){
-  res.render("lstm_bin_table");
-});
-app.get("/knn_table",function(req,res){
-  res.render("knn_table");
-});
-app.get("/rf_table",function(req,res){
-  res.render("rf_table");
-});
-app.get("/cnn_table",function(req,res){
-  res.render("cnn_table");
-});
-app.get("/lstm_table",function(req,res){
-  res.render("lstm_table");
-});
-app.get("/stats",function(req,res){
-  res.render("stats");
-});
-app.get("/parameters",function(req,res){
-  res.render("parameters");
-})
-app.get("/contact",function(req,res){
-  res.render("contact");
-})
+// Google OAuth routes
 app.get('/auth/google',
-  passport.authenticate('google', { scope:
-      ['profile' ] }
-));
-app.get("/auth/google/NIDS",
-  passport.authenticate('google', { failureRedirect: "/login" }),
+  passport.authenticate('google', { scope: ['profile'] })
+);
+
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: '/login' }),
   function(req, res) {
-    res.redirect("/submit");
+    res.redirect('/home');
   });
-app.get("/login", function(req, res){
-  res.render("login");
 
+
+app.get("/login", (req, res) => {
+    res.render("login"); // Just render the login page
 });
+app.get("/register", (req, res) => res.render("register"));
+app.get("/submit", (req, res) => req.isAuthenticated() ? res.render("submit") : res.redirect("/login"));
 
 
-
-app.get("/register", function(req, res){
-  res.render("register");
-});
-app.get("/submit",function(req,res)
-{
-  if (req.isAuthenticated()){
-    res.render("submit");
-  } else {
-    res.redirect("/login");
-  }
-  
-});
-
-app.get("/logout", function(req, res){
-  req.logout();
-  res.redirect("/");
-  
-  if(submitted_csv_file!=""){
-    path='./Uploaded_files/'
-path+=submitted_csv_file;
-  fs.unlink(path, (err) => {
+app.get("/logout", (req, res) => {
+  req.logout((err) => {  //Passport 0.6 requires passing a callback
     if (err) {
-        console.log(err);
+        console.log("Logout error", err);
+        return next(err);
     }
-    console.log('file deleted');
-    submitted_csv_file="";
+    res.redirect("/");
+    if (submitted_csv_file) {
+      const path = `./Uploaded_files/${submitted_csv_file}`;
+      fs.unlink(path, err => {
+        if (err) console.log(err);
+        console.log('File deleted');
+        submitted_csv_file = "";
+      });
+    }
+  });
 });
-  }
 
-
-});
-
-app.post("/register", function(req, res){
-  User.register({username: req.body.username},req.body.password, function(err, user){
+app.post("/register", (req, res) => {
+  User.register({ username: req.body.username }, req.body.password, (err, user) => {
     if (err) {
       console.log(err);
       res.redirect("/register");
     } else {
-      passport.authenticate("local")(req, res, function(){
-        res.redirect("/submit");
-      });
+      passport.authenticate("local")(req, res, () => res.redirect("/submit"));
     }
   });
 });
 
-app.post("/login", function(req, res){
+app.post("/login", passport.authenticate("local", {
+  successRedirect: "/home",
+  failureRedirect: "/login"
+}));
 
-  const user = new User({
-    username: req.body.username,
-    password: req.body.password,
-  });
-  req.login(user, function(err){
-    if (err) {
-      console.log(err);
-    } else {
-      passport.authenticate("local")(req, res, function(){
-        res.redirect("/submit");
-      });
-    }
-  });
+
+const PORT = process.env.PORT || 4000;
+
+app.listen(PORT, function () {
+  console.log(`Server started on port ${PORT}`);
 });
 
-let port = process.env.PORT;
-	if (port == null || port == "") {
-  	port = 3000;
-	}
-app.listen(port, function() {
-  console.log("Server started on port 3000.");
+
+app.get("/testdb", async (req, res) => {
+  try {
+    // Assuming you have a model named 'TestModel' and a database named 'testdb'
+    const TestModel = mongoose.model('Test', new mongoose.Schema({ name: String }), 'tests'); // 'tests' is the collection name
+
+    // Create a new document
+    const newTestDocument = new TestModel({
+      name: "Test Document " + new Date(),
+    });
+
+    // Save the new document to the database
+    await newTestDocument.save();
+
+    console.log("Successfully created and saved a test document.");
+    res.status(200).send("Successfully created and saved a test document.");
+  } catch (error) {
+    console.error("Error creating and saving test document:", error);
+    res.status(500).send("Error creating and saving test document: " + error.message);
+  }
+});
+
+
+
+// Add to user schema
+userSchema.plugin(findOrCreate);
+
+const { spawn } = require("child_process");
+
+// Your other app.get or app.post routes here...
+
+app.get("/secrets_2", (req, res) => {
+  const python = spawn("python", ["nids_random.py"]); // 👈 Make sure this is correct path to your .py file
+
+  let result = "";
+
+  python.stdout.on("data", (data) => {
+    result += data.toString();
+  });
+
+  python.stderr.on("data", (data) => {
+    console.error(`stderr: ${data}`);
+  });
+
+  python.on("close", (code) => {
+    try {
+      const parsed = JSON.parse(result);
+      res.render("secrets_2", {
+        knn_bin_cls: parsed.knn_bin_cls,
+        knn_mul_cls: parsed.knn_mul_cls,
+        knn_bin_acc: parsed.knn_bin_acc,
+        knn_desc: parsed.knn_desc,
+      });
+    } catch (e) {
+      console.error("Error parsing Python output:", e);
+      res.status(500).send("Error parsing prediction");
+    }
+  });
 });

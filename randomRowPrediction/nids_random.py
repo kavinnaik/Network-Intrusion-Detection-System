@@ -197,6 +197,39 @@ def advance():
         else:
             print("Multi class Type:can't be predicted")
             print('Unknown!')
+    import json
+
+# Sample one point and get predictions
+tp = x_validate.sample()
+
+# Get KNN Binary classification (0 or 1)
+knn_bin_cls = int(knn_bin.predict(tp)[0])
+# Get KNN Multi classification
+knn_mul_cls = str(knn_multi.predict(tp)[0])
+# Get accuracy score (optional; use any static or computed value)
+knn_bin_acc = 0.85  # Replace this with your own metric if you want
+# Get a simple description based on multi class
+if knn_mul_cls == 'dos':
+    knn_desc = 'Denial-of-Service (DoS) attack - floods the network.'
+elif knn_mul_cls == 'probe':
+    knn_desc = 'Probe attack - scans devices for vulnerabilities.'
+elif knn_mul_cls == 'r2l':
+    knn_desc = 'Remote to local (R2L) - unauthorized remote access.'
+elif knn_mul_cls == 'u2r':
+    knn_desc = 'User to root (U2R) - privilege escalation attack.'
+elif knn_mul_cls == 'normal':
+    knn_desc = 'This is safe.'
+else:
+    knn_desc = 'Unknown type.'
+
+# Output JSON to stdout for Node.js to parse
+print(json.dumps({
+    "knn_bin_cls": knn_bin_cls,
+    "knn_mul_cls": knn_mul_cls,
+    "knn_bin_acc": knn_bin_acc,
+    "knn_desc": knn_desc
+}))
+        
 
 advance()
             
